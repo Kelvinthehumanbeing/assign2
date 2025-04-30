@@ -5,27 +5,31 @@
 #include "gbn.h"
 
 /* ******************************************************************
-   Go Back N protocol.  Adapted from J.F.Kurose
-   ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.2  
-
-   Network properties:
-   - one way network delay averages five time units (longer if there
-   are other messages in the channel for GBN), but can be larger
-   - packets can be corrupted (either the header or the data portion)
-   or lost, according to user-defined probabilities
-   - packets will be delivered in the order in which they were sent
-   (although some can be lost).
-
-   Modifications: 
-   - removed bidirectional GBN code and other code not used by prac. 
-   - fixed C style to adhere to current programming style
-   - added GBN implementation
-**********************************************************************/
+   Selective Repeat protocol implementation
+*********************************************************************/
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
 #define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
-#define SEQSPACE 7      /* the min sequence space for GBN must be at least windowsize + 1 */
+#define SEQSPACE 12     /* the sequence space must be twice the window size for SR */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
+
+/* packet status for sender window slots */
+#define PKT_EMPTY 0     /* slot is empty */
+#define PKT_SENT 1      /* packet is sent, waiting for ACK */
+#define PKT_ACKED 2     /* packet is ACKed */
+
+/* structure to store packet information in sender window */
+struct sender_slot {
+    struct pkt packet;  /* the actual packet */
+    int status;         /* status of this slot: EMPTY/SENT/ACKED */
+    double timer;       /* when this packet was sent (for timeout) */
+};
+
+/* structure to store packet information in receiver window */
+struct receiver_slot {
+    struct pkt packet;  /* the actual packet */
+    bool received;      /* whether packet has been received */
+};
 
 /* generic procedure to compute the checksum of a packet.  Used by both sender and receiver  
    the simulator will overwrite part of your packet with 'z's.  It will not overwrite your 
@@ -56,7 +60,7 @@ bool IsCorrupted(struct pkt packet)
 
 /********* Sender (A) variables and functions ************/
 
-static struct pkt buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
+static struct sender_slot buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
 static int windowfirst, windowlast;    /* array indexes of the first/last packet awaiting ACK */
 static int windowcount;                /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
@@ -82,7 +86,9 @@ void A_output(struct msg message)
     /* put packet in window buffer */
     /* windowlast will always be 0 for alternating bit; but not for GoBackN */
     windowlast = (windowlast + 1) % WINDOWSIZE; 
-    buffer[windowlast] = sendpkt;
+    buffer[windowlast].packet = sendpkt;
+    buffer[windowlast].status = PKT_SENT;
+    buffer[windowlast].timer = get_sim_time();
     windowcount++;
 
     /* send out packet */
@@ -122,8 +128,8 @@ void A_input(struct pkt packet)
 
     /* check if new ACK or duplicate */
     if (windowcount != 0) {
-          int seqfirst = buffer[windowfirst].seqnum;
-          int seqlast = buffer[windowlast].seqnum;
+          int seqfirst = buffer[windowfirst].packet.seqnum;
+          int seqlast = buffer[windowlast].packet.seqnum;
           /* check case when seqnum has and hasn't wrapped */
           if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
               ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
@@ -173,9 +179,9 @@ void A_timerinterrupt(void)
   for(i=0; i<windowcount; i++) {
 
     if (TRACE > 0)
-      printf ("---A: resending packet %d\n", (buffer[(windowfirst+i) % WINDOWSIZE]).seqnum);
+      printf ("---A: resending packet %d\n", (buffer[(windowfirst+i) % WINDOWSIZE]).packet.seqnum);
 
-    tolayer3(A,buffer[(windowfirst+i) % WINDOWSIZE]);
+    tolayer3(A,buffer[(windowfirst+i) % WINDOWSIZE].packet);
     packets_resent++;
     if (i==0) starttimer(A,RTT);
   }
