@@ -76,7 +76,7 @@ void A_output(struct msg message)
   /* if not blocked waiting on ACK */
   if ( windowcount < WINDOWSIZE) {
     if (TRACE > 1)
-      printf("----A: New message arrives, send window is not full, send new messge to layer3!\n");
+      printf("----A: New message arrives, send window is not full, send new message to layer3!\n");
 
     /* create packet */
     sendpkt.seqnum = A_nextseqnum;
@@ -94,7 +94,7 @@ void A_output(struct msg message)
     /* send out packet */
     if (TRACE > 0)
       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
-    tolayer3 (A, sendpkt);
+    tolayer3(A, sendpkt);
 
     /* start timer for this packet */
     starttimer(A,RTT);
@@ -102,7 +102,7 @@ void A_output(struct msg message)
     /* get next sequence number, wrap back to 0 */
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;  
   }
-  /* if blocked,  window is full */
+  /* if blocked, window is full */
   else {
     if (TRACE > 0)
       printf("----A: New message arrives, send window is full\n");
@@ -131,6 +131,9 @@ void A_input(struct pkt packet)
         /* mark packet as acked */
         sender_window[i].status = PKT_ACKED;
         new_ACKs++;
+        
+        if (TRACE > 0)
+          printf("----A: ACK %d is not a duplicate\n",packet.acknum);
 
         /* stop timer for this packet */
         stoptimer(A);
@@ -151,10 +154,12 @@ void A_input(struct pkt packet)
         break;
       }
     }
+    if (i == WINDOWSIZE && TRACE > 0)
+      printf("----A: duplicate ACK received, do nothing!\n");
   }
   else {
     if (TRACE > 0)
-      printf ("----A: corrupted ACK is received, do nothing!\n");
+      printf("----A: corrupted ACK is received, do nothing!\n");
   }
 }
 
@@ -164,13 +169,13 @@ void A_timerinterrupt(void)
   int i;
 
   if (TRACE > 0)
-    printf("----A: time out,resend packets!\n");
+    printf("----A: time out, resend packets!\n");
 
   /* resend all unacked packets in window */
   for (i = 0; i < WINDOWSIZE; i++) {
     if (sender_window[i].status == PKT_SENT) {
       if (TRACE > 0)
-        printf("---A: resending packet %d\n", sender_window[i].packet.seqnum);
+        printf("----A: resending packet %d\n", sender_window[i].packet.seqnum);
       tolayer3(A, sender_window[i].packet);
       packets_resent++;
     }
@@ -218,7 +223,7 @@ void B_input(struct pkt packet)
     
     if (offset < WINDOWSIZE) {
       if (TRACE > 0)
-        printf("----B: packet %d is correctly received\n", packet.seqnum);
+        printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
       
       /* store packet in receiver window */
       receiver_window[offset].packet = packet;
@@ -240,13 +245,13 @@ void B_input(struct pkt packet)
     } else {
       /* packet outside window - send ACK for last in-order packet */
       if (TRACE > 0)
-        printf("----B: packet %d outside window\n", packet.seqnum);
+        printf("----B: packet %d outside window, resend ACK!\n", packet.seqnum);
       sendpkt.acknum = ((rcv_base - 1) + SEQSPACE) % SEQSPACE;
     }
   } else {
     /* packet is corrupted - send ACK for last in-order packet */
     if (TRACE > 0)
-      printf("----B: packet corrupted\n");
+      printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
     sendpkt.acknum = ((rcv_base - 1) + SEQSPACE) % SEQSPACE;
   }
 
