@@ -9,8 +9,8 @@
 *********************************************************************/
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
-#define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
-#define SEQSPACE 12     /* the sequence space must be twice the window size for SR */
+#define WINDOWSIZE 8    /* the maximum number of buffered unacked packet */
+#define SEQSPACE 16     /* the sequence space must be twice the window size for SR */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
 
 /* packet status for sender window slots */
@@ -89,6 +89,7 @@ void A_output(struct msg message)
     windowlast = (windowlast + 1) % WINDOWSIZE; 
     sender_window[windowlast].packet = sendpkt;
     sender_window[windowlast].status = PKT_SENT;
+    sender_window[windowlast].timer = time;
     windowcount++;
 
     /* send out packet */
@@ -96,8 +97,11 @@ void A_output(struct msg message)
       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
     tolayer3(A, sendpkt);
 
-    /* start timer for this packet */
-    starttimer(A,RTT);
+    /* start timer if first packet in window */
+    if (windowcount == 1) {
+      stoptimer(A);
+      starttimer(A, RTT);
+    }
 
     /* get next sequence number, wrap back to 0 */
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;  
@@ -149,6 +153,7 @@ void A_input(struct pkt packet)
 
         /* restart timer if there are unacked packets */
         if (windowcount > 0) {
+          stoptimer(A);
           starttimer(A, RTT);
         }
         break;
@@ -167,23 +172,28 @@ void A_input(struct pkt packet)
 void A_timerinterrupt(void)
 {
   int i;
+  double current_time = time;
 
   if (TRACE > 0)
     printf("----A: time out,resend packets!\n");
 
-  /* resend all unacked packets in window */
+  /* resend only timed out packets in window */
   for (i = 0; i < WINDOWSIZE; i++) {
-    if (sender_window[i].status == PKT_SENT) {
+    if (sender_window[i].status == PKT_SENT && 
+        (current_time - sender_window[i].timer) > RTT) {
       if (TRACE > 0)
         printf("---A: resending packet %d\n", sender_window[i].packet.seqnum);
       tolayer3(A, sender_window[i].packet);
       packets_resent++;
+      sender_window[i].timer = current_time;
     }
   }
 
-  /* restart timer */
-  if (windowcount > 0)
+  /* restart timer if there are unacked packets */
+  if (windowcount > 0) {
+    stoptimer(A);
     starttimer(A, RTT);
+  }
 }
 
 /* the following routine will be called once (only) before any other */
