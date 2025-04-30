@@ -66,6 +66,7 @@ static int windowlast;                                  /* array index of the la
 static int windowcount;                                 /* the number of packets currently in window */
 static int A_nextseqnum;                                /* the next sequence number to be used by the sender */
 
+
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
 {
@@ -75,7 +76,7 @@ void A_output(struct msg message)
   /* if not blocked waiting on ACK */
   if ( windowcount < WINDOWSIZE) {
     if (TRACE > 1)
-      printf("----A: New message arrives, send window is not full, send new message to layer3!\n");
+      printf("----A: New message arrives, send window is not full, send new messge to layer3!\n");
 
     /* create packet */
     sendpkt.seqnum = A_nextseqnum;
@@ -168,13 +169,13 @@ void A_timerinterrupt(void)
   int i;
 
   if (TRACE > 0)
-    printf("----A: time out, resend packets!\n");
+    printf("----A: time out,resend packets!\n");
 
   /* resend all unacked packets in window */
   for (i = 0; i < WINDOWSIZE; i++) {
     if (sender_window[i].status == PKT_SENT) {
       if (TRACE > 0)
-        printf("----A: resending packet %d\n", sender_window[i].packet.seqnum);
+        printf("---A: resending packet %d\n", sender_window[i].packet.seqnum);
       tolayer3(A, sender_window[i].packet);
       packets_resent++;
     }
