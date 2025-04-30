@@ -60,10 +60,12 @@ bool IsCorrupted(struct pkt packet)
 
 /********* Sender (A) variables and functions ************/
 
-static struct sender_slot buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
-static int windowfirst, windowlast;    /* array indexes of the first/last packet awaiting ACK */
-static int windowcount;                /* the number of packets currently awaiting an ACK */
-static int A_nextseqnum;               /* the next sequence number to be used by the sender */
+static struct sender_slot sender_window[WINDOWSIZE];    /* array for storing packets waiting for ACK */
+static int windowfirst;                                 /* array index of the first packet in window */
+static int windowlast;                                  /* array index of the last packet in window */
+static int windowcount;                                 /* the number of packets currently in window */
+static int A_nextseqnum;                                /* the next sequence number to be used by the sender */
+static double packet_timers[WINDOWSIZE];                /* individual timer for each packet */
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
@@ -86,9 +88,9 @@ void A_output(struct msg message)
     /* put packet in window buffer */
     /* windowlast will always be 0 for alternating bit; but not for GoBackN */
     windowlast = (windowlast + 1) % WINDOWSIZE; 
-    buffer[windowlast].packet = sendpkt;
-    buffer[windowlast].status = PKT_SENT;
-    buffer[windowlast].timer = get_sim_time();
+    sender_window[windowlast].packet = sendpkt;
+    sender_window[windowlast].status = PKT_SENT;
+    sender_window[windowlast].timer = get_sim_time();
     windowcount++;
 
     /* send out packet */
@@ -128,8 +130,8 @@ void A_input(struct pkt packet)
 
     /* check if new ACK or duplicate */
     if (windowcount != 0) {
-          int seqfirst = buffer[windowfirst].packet.seqnum;
-          int seqlast = buffer[windowlast].packet.seqnum;
+          int seqfirst = sender_window[windowfirst].packet.seqnum;
+          int seqlast = sender_window[windowlast].packet.seqnum;
           /* check case when seqnum has and hasn't wrapped */
           if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
               ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
@@ -179,9 +181,9 @@ void A_timerinterrupt(void)
   for(i=0; i<windowcount; i++) {
 
     if (TRACE > 0)
-      printf ("---A: resending packet %d\n", (buffer[(windowfirst+i) % WINDOWSIZE]).packet.seqnum);
+      printf ("---A: resending packet %d\n", (sender_window[(windowfirst+i) % WINDOWSIZE]).packet.seqnum);
 
-    tolayer3(A,buffer[(windowfirst+i) % WINDOWSIZE].packet);
+    tolayer3(A,sender_window[(windowfirst+i) % WINDOWSIZE].packet);
     packets_resent++;
     if (i==0) starttimer(A,RTT);
   }
