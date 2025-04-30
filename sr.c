@@ -65,7 +65,6 @@ static int windowfirst;                                 /* array index of the fi
 static int windowlast;                                  /* array index of the last packet in window */
 static int windowcount;                                 /* the number of packets currently in window */
 static int A_nextseqnum;                                /* the next sequence number to be used by the sender */
-static double packet_timers[WINDOWSIZE];                /* individual timer for each packet */
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
