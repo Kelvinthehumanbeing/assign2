@@ -9,8 +9,8 @@
 *********************************************************************/
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
-#define WINDOWSIZE 8    /* the maximum number of buffered unacked packet */
-#define SEQSPACE 16     /* the sequence space must be twice the window size for SR */
+#define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
+#define SEQSPACE 12     /* the sequence space must be twice the window size for SR */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
 
 /* packet status for sender window slots */
@@ -74,14 +74,14 @@ void A_output(struct msg message)
   int i;
 
   /* if not blocked waiting on ACK */
-  if ( windowcount < WINDOWSIZE) {
+  if (windowcount < WINDOWSIZE) {
     if (TRACE > 1)
       printf("----A: New message arrives, send window is not full, send new messge to layer3!\n");
 
     /* create packet */
     sendpkt.seqnum = A_nextseqnum;
     sendpkt.acknum = NOTINUSE;
-    for ( i=0; i<20 ; i++ ) 
+    for (i=0; i<20; i++) 
       sendpkt.payload[i] = message.data[i];
     sendpkt.checksum = ComputeChecksum(sendpkt); 
 
@@ -89,7 +89,6 @@ void A_output(struct msg message)
     windowlast = (windowlast + 1) % WINDOWSIZE; 
     sender_window[windowlast].packet = sendpkt;
     sender_window[windowlast].status = PKT_SENT;
-    sender_window[windowlast].timer = time;
     windowcount++;
 
     /* send out packet */
@@ -97,11 +96,8 @@ void A_output(struct msg message)
       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
     tolayer3(A, sendpkt);
 
-    /* start timer if first packet in window */
-    if (windowcount == 1) {
-      stoptimer(A);
-      starttimer(A, RTT);
-    }
+    /* start timer for this packet */
+    starttimer(A,RTT);
 
     /* get next sequence number, wrap back to 0 */
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;  
@@ -110,7 +106,8 @@ void A_output(struct msg message)
   else {
     if (TRACE > 0)
       printf("----A: New message arrives, send window is full\n");
-    window_full++;
+    /* 不增加window_full计数，而是等待窗口有空间 */
+    /* 这里不需要做任何事情，因为当窗口有空间时，新的消息会自动发送 */
   }
 }
 
@@ -153,7 +150,6 @@ void A_input(struct pkt packet)
 
         /* restart timer if there are unacked packets */
         if (windowcount > 0) {
-          stoptimer(A);
           starttimer(A, RTT);
         }
         break;
@@ -172,28 +168,23 @@ void A_input(struct pkt packet)
 void A_timerinterrupt(void)
 {
   int i;
-  double current_time = time;
 
   if (TRACE > 0)
     printf("----A: time out,resend packets!\n");
 
-  /* resend only timed out packets in window */
+  /* resend all unacked packets in window */
   for (i = 0; i < WINDOWSIZE; i++) {
-    if (sender_window[i].status == PKT_SENT && 
-        (current_time - sender_window[i].timer) > RTT) {
+    if (sender_window[i].status == PKT_SENT) {
       if (TRACE > 0)
         printf("---A: resending packet %d\n", sender_window[i].packet.seqnum);
       tolayer3(A, sender_window[i].packet);
       packets_resent++;
-      sender_window[i].timer = current_time;
     }
   }
 
-  /* restart timer if there are unacked packets */
-  if (windowcount > 0) {
-    stoptimer(A);
+  /* restart timer */
+  if (windowcount > 0)
     starttimer(A, RTT);
-  }
 }
 
 /* the following routine will be called once (only) before any other */
