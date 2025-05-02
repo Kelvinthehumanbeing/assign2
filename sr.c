@@ -70,7 +70,7 @@ static int A_nextseqnum;                                /* the next sequence num
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
 {
-  int i;
+  int i, j;
   struct pkt packet;
   bool found_empty = false;
 
@@ -87,7 +87,7 @@ void A_output(struct msg message)
         /* create packet */
         packet.seqnum = A_nextseqnum;
         packet.acknum = NOTINUSE;
-        for (int j = 0; j < 20; j++)
+        for (j = 0; j < 20; j++)
           packet.payload[j] = message.data[j];
         packet.checksum = ComputeChecksum(packet);
 
@@ -171,6 +171,8 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt(void)
 {
+  int i;
+  int slot;
   if (TRACE > 0)
     printf("----A: time out,resend packets!\n");
 
@@ -183,8 +185,8 @@ void A_timerinterrupt(void)
     starttimer(A, RTT);
   } else if (windowcount > 0) {
     /* If first packet is not SENT, find the first SENT packet */
-    for (int i = 0; i < windowcount; i++) {
-      int slot = (windowfirst + i) % WINDOWSIZE;
+    for (i = 0; i < windowcount; i++) {
+      slot = (windowfirst + i) % WINDOWSIZE;
       if (sender_window[slot].status == PKT_SENT) {
         if (TRACE > 0)
           printf("---A: resending packet %d\n", sender_window[slot].packet.seqnum);
@@ -234,7 +236,7 @@ void B_input(struct pkt packet)
     
     if (offset < WINDOWSIZE) {
       if (TRACE > 0)
-        printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
+        printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
       
       /* store packet in receiver window if not already received */
       if (!receiver_window[offset].received) {
@@ -256,16 +258,16 @@ void B_input(struct pkt packet)
       /* send ACK */
       sendpkt.acknum = packet.seqnum;
     } else {
-      /* packet outside window - send ACK for last in-order packet */
+      /* packet outside window - send ACK for the last in-order packet */
       if (TRACE > 0)
-        printf("----B: packet %d outside window, resend ACK!\n", packet.seqnum);
-      sendpkt.acknum = ((rcv_base - 1) + SEQSPACE) % SEQSPACE;
+        printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
+      sendpkt.acknum = rcv_base;
     }
   } else {
-    /* packet is corrupted - send ACK for last in-order packet */
+    /* packet is corrupted - send ACK for the last in-order packet */
     if (TRACE > 0)
       printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
-    sendpkt.acknum = ((rcv_base - 1) + SEQSPACE) % SEQSPACE;
+    sendpkt.acknum = rcv_base;
   }
 
   /* create packet */
