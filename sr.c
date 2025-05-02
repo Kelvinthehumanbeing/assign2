@@ -1,8 +1,11 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdbool.h>
 #include "emulator.h"
 #include "gbn.h"
+
+
+#define true 1
+#define false 0
 
 /* ******************************************************************
    Selective Repeat protocol implementation
@@ -31,22 +34,23 @@ int ComputeChecksum(struct pkt packet)
   return checksum;
 }
 
-bool IsCorrupted(struct pkt packet)
+int IsCorrupted(struct pkt packet)
 {
   if (packet.checksum == ComputeChecksum(packet))
-    return (false);
+    return (0);
   else
-    return (true);
+    return (1);
 }
 
 
 /********* Sender (A) variables and functions ************/
 
 static struct pkt buffer[WINDOWSIZE];                   /* array for storing packets waiting for ACK */
-static bool acked[WINDOWSIZE];                          /* track if a packet has been acknowledged */
+static int acked[WINDOWSIZE];                          /* track if a packet has been acknowledged */
 static int windowfirst, windowlast;                     /* array index of the first/last packet in window */
 static int windowcount;                                 /* the number of packets currently in window */
 static int A_nextseqnum;                                /* the next sequence number to be used by the sender */
+static int timers[WINDOWSIZE];                          /* track which packets have timers */
 
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
@@ -70,7 +74,7 @@ void A_output(struct msg message)
     /* put packet in window buffer */
     windowlast = (windowlast + 1) % WINDOWSIZE;
     buffer[windowlast] = sendpkt;
-    acked[windowlast] = false;
+    acked[windowlast] = 0;
     windowcount++;
 
     /* send packet */
@@ -78,9 +82,11 @@ void A_output(struct msg message)
       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
     tolayer3(A, sendpkt);
 
-    /* start timer if first packet in window */
-    if (windowcount == 1)
+    /* start timer for this packet */
+    if (!timers[windowlast]) {
       starttimer(A, RTT);
+      timers[windowlast] = 1;
+    }
 
     /* get next sequence number, wrap back to 0 */
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;
@@ -110,27 +116,39 @@ void A_input(struct pkt packet)
       for (i = 0; i < windowcount; i++) {
         int slot = (windowfirst + i) % WINDOWSIZE;
         if (buffer[slot].seqnum == packet.acknum && !acked[slot]) {
-          acked[slot] = true;
+          acked[slot] = 1;
           /* packet is a new ACK */
           if (TRACE > 0)
             printf("----A: ACK %d is not a duplicate\n",packet.acknum);
           new_ACKs++;
 
+          /* stop timer for this packet */
+          if (timers[slot]) {
+            stoptimer(A);
+            timers[slot] = 0;
+          }
+
           /* slide window if it's the first packet */
           while (windowcount > 0 && acked[windowfirst]) {
-            acked[windowfirst] = false;
+            acked[windowfirst] = 0;
+            timers[windowfirst] = 0;
             windowfirst = (windowfirst + 1) % WINDOWSIZE;
             windowcount--;
           }
+
+          /* start timer for next unacked packet if any */
+          if (windowcount > 0) {
+            for (i = 0; i < windowcount; i++) {
+              int slot = (windowfirst + i) % WINDOWSIZE;
+              if (!acked[slot] && !timers[slot]) {
+                starttimer(A, RTT);
+                timers[slot] = 1;
+                break;
+              }
+            }
+          }
           break;
         }
-      }
-      /* After sliding window, restart timer if there are still outstanding packets */
-      if (windowcount > 0) {
-        stoptimer(A);
-        starttimer(A, RTT);
-      } else {
-        stoptimer(A);
       }
     }
   }
@@ -143,17 +161,25 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt(void)
 {
+  int i;
+
   if (TRACE > 0)
     printf("----A: time out,resend packets!\n");
 
-  /* resend the earliest unACKed packet */
-  if (windowcount > 0) {
-    if (TRACE > 0)
-      printf("---A: resending packet %d\n", buffer[windowfirst].seqnum);
-    tolayer3(A, buffer[windowfirst]);
-    packets_resent++;
-    /* restart timer for this earliest unACKed packet */
-    starttimer(A, RTT);
+  /* find the first unacked packet and resend it */
+  for (i = 0; i < windowcount; i++) {
+    int slot = (windowfirst + i) % WINDOWSIZE;
+    if (!acked[slot]) {
+      if (TRACE > 0)
+        printf("Sending packet %d to layer 3\n", buffer[slot].seqnum);
+      tolayer3(A, buffer[slot]);
+      packets_resent++;
+      if (!timers[slot]) {
+        starttimer(A, RTT);
+        timers[slot] = 1;
+      }
+      break;
+    }
   }
 }
 
@@ -161,13 +187,15 @@ void A_timerinterrupt(void)
 /* entity A routines are called. You can use it to do any initialization */
 void A_init(void)
 {
+  int i;
   /* initialise A's window, buffer and sequence number */
   A_nextseqnum = 0;  /* A starts with seq num 0, do not change this */
   windowfirst = 0;
   windowlast = -1;
   windowcount = 0;
-  for (int i = 0; i < WINDOWSIZE; i++) {
-      acked[i] = false;
+  for (i = 0; i < WINDOWSIZE; i++) {
+    acked[i] = 0;
+    timers[i] = 0;
   }
 }
 
@@ -175,7 +203,7 @@ void A_init(void)
 
 static int rcv_base;      /* base sequence number of receiving window */
 static int B_nextseqnum;  /* the sequence number for the next packets sent by B */
-static bool received[SEQSPACE];         /* tracks received sequence numbers */
+static int received[SEQSPACE];         /* tracks received sequence numbers */
 static struct pkt rcv_buffer[SEQSPACE]; /* buffer for storing received packets */
 
 /* called from layer 3, when a packet arrives for layer 4 at B*/
@@ -188,20 +216,21 @@ void B_input(struct pkt packet)
     int offset = (packet.seqnum - rcv_base + SEQSPACE) % SEQSPACE;
     if (offset < WINDOWSIZE) {
       if (!received[packet.seqnum]) {
-        received[packet.seqnum] = true;
+        received[packet.seqnum] = 1;
         rcv_buffer[packet.seqnum] = packet;
         if (TRACE > 0)
           printf("----B: packet %d is correctly received, send ACK!\n",packet.seqnum);
         packets_received++;
       }
 
+      /* deliver in-order packets to layer 5 */
       while (received[rcv_base]) {
         tolayer5(B, rcv_buffer[rcv_base].payload);
-        received[rcv_base] = false;
+        received[rcv_base] = 0;
         rcv_base = (rcv_base + 1) % SEQSPACE;
       }
 
-      /* send ACK */
+      /* send ACK for the received packet */
       sendpkt.acknum = packet.seqnum;
     } else {
       /* packet outside window - send ACK for the last in-order packet */
@@ -235,10 +264,11 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
+  int i;
   rcv_base = 0;
   B_nextseqnum = 1;
-  for (int i = 0; i < SEQSPACE; i++) {
-    received[i] = false;
+  for (i = 0; i < SEQSPACE; i++) {
+    received[i] = 0;
   }
 }
 
@@ -255,4 +285,3 @@ void B_output(struct msg message)
 void B_timerinterrupt(void)
 {
 }
-
