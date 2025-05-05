@@ -46,12 +46,9 @@ int IsCorrupted(struct pkt packet)
 /********* Sender (A) variables and functions ************/
 
 static struct pkt buffer[WINDOWSIZE];                   /* array for storing packets waiting for ACK */
-static int acked[WINDOWSIZE];                          /* track if a packet has been acknowledged */
-static int windowfirst, windowlast;                     /* array index of the first/last packet in window */
+static int windowfirst;                                 /* first sequence number in window */
 static int windowcount;                                 /* the number of packets currently in window */
 static int A_nextseqnum;                                /* the next sequence number to be used by the sender */
-static int timers[WINDOWSIZE];                          /* track which packets have timers */
-
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
@@ -187,16 +184,10 @@ void A_timerinterrupt(void)
 /* entity A routines are called. You can use it to do any initialization */
 void A_init(void)
 {
-  int i;
   /* initialise A's window, buffer and sequence number */
   A_nextseqnum = 0;  /* A starts with seq num 0, do not change this */
   windowfirst = 0;
-  windowlast = -1;
   windowcount = 0;
-  for (i = 0; i < WINDOWSIZE; i++) {
-    acked[i] = 0;
-    timers[i] = 0;
-  }
 }
 
 /********* Receiver (B)  variables and procedures ************/
