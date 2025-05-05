@@ -104,7 +104,11 @@ void A_output(struct msg message)
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(struct pkt packet)
 {
+  int ackcount = 0;
   int i;
+  int seqfirst = windowfirst;
+  int seqlast = (windowfirst + WINDOWSIZE - 1) % SEQSPACE;
+  int index;
 
   /* if received ACK is not corrupted */ 
   if (!IsCorrupted(packet)) {
@@ -114,42 +118,52 @@ void A_input(struct pkt packet)
 
     /* check if new ACK */
     if (windowcount != 0) {
-      /* find the packet in window */
-      for (i = 0; i < windowcount; i++) {
-        int slot = (windowfirst + i) % WINDOWSIZE;
-        if (buffer[slot].seqnum == packet.acknum && !acked[slot]) {
-          acked[slot] = 1;
+      /* check case when seqnum has and hasn't wrapped */
+      if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
+          ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast)))
+      {
+        /* check corresponding position in window buffer */
+        if (packet.acknum >= seqfirst)
+          index = packet.acknum - seqfirst;
+        else
+          index = WINDOWSIZE - seqfirst + packet.acknum;
+
+        if (buffer[index].acknum == NOTINUSE) {
           /* packet is a new ACK */
           if (TRACE > 0)
             printf("----A: ACK %d is not a duplicate\n",packet.acknum);
           new_ACKs++;
+          windowcount--;
+          buffer[index].acknum = packet.acknum;
 
-          /* stop timer for this packet */
-          if (timers[slot]) {
-            stoptimer(A);
-            timers[slot] = 0;
-          }
-
-          /* slide window if it's the first packet */
-          while (windowcount > 0 && acked[windowfirst]) {
-            acked[windowfirst] = 0;
-            timers[windowfirst] = 0;
-            windowfirst = (windowfirst + 1) % WINDOWSIZE;
-            windowcount--;
-          }
-
-          /* start timer for next unacked packet if any */
-          if (windowcount > 0) {
-            for (i = 0; i < windowcount; i++) {
-              int slot = (windowfirst + i) % WINDOWSIZE;
-              if (!acked[slot] && !timers[slot]) {
-                starttimer(A, RTT);
-                timers[slot] = 1;
+          /* if it's the base packet */
+          if (packet.acknum == seqfirst) {
+            /* check how many consecutive acks received in buffer */
+            for (i = 0; i < WINDOWSIZE; i++) {
+              if (buffer[i].acknum != NOTINUSE && buffer[i].payload[0] != '\0')
+                ackcount++;
+              else
                 break;
-              }
             }
+
+            /* slide window */
+            windowfirst = (windowfirst + ackcount) % SEQSPACE;
+
+            /* update buffer */
+            for (i = 0; i < WINDOWSIZE; i++) {
+              if (i + ackcount < WINDOWSIZE)
+                buffer[i] = buffer[i + ackcount];
+            }
+
+            /* restart timer */
+            stoptimer(A);
+            if (windowcount > 0)
+              starttimer(A, RTT);
           }
-          break;
+        }
+        else {
+          if (TRACE > 0)
+            printf("----A: duplicate ACK received, do nothing!\n");
         }
       }
     }
@@ -163,26 +177,13 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt(void)
 {
-  int i;
-
-  if (TRACE > 0)
+  if (TRACE > 0) {
     printf("----A: time out,resend packets!\n");
-
-  /* find the first unacked packet and resend it */
-  for (i = 0; i < windowcount; i++) {
-    int slot = (windowfirst + i) % WINDOWSIZE;
-    if (!acked[slot]) {
-      if (TRACE > 0)
-        printf("Sending packet %d to layer 3\n", buffer[slot].seqnum);
-      tolayer3(A, buffer[slot]);
-      packets_resent++;
-      if (!timers[slot]) {
-        starttimer(A, RTT);
-        timers[slot] = 1;
-      }
-      break;
-    }
+    printf("---A: resending packet %d\n", buffer[0].seqnum);
   }
+  tolayer3(A, buffer[0]);
+  packets_resent++;
+  starttimer(A, RTT);
 }
 
 /* the following routine will be called once (only) before any other */
